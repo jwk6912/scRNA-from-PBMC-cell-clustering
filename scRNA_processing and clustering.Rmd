@@ -1,0 +1,189 @@
+
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+
+# Load the PBMC dataset
+dirname <- "/Users/jungwon_kim/Desktop/Github/data/filtered_feature_bc_matrix" #barcode matrix 
+
+
+list.files(dirname)
+                 
+pbmc.data <- Read10X(data.dir = dirname)
+pbmc <- CreateSeuratObject(counts = pbmc.data, project = 'pbmc5k', min.cells = 3, min.features = 200)
+
+
+```
+
+
+
+```{r}
+#Look at the summary counts for genes and cells 
+counts_per_cell <- Matrix::colSums(pbmc)
+counts_per_gene <- Matrix::rowSums(pbmc)
+genes_per_cell <- Matrix::colSums(pbmc.data) # count gene only if it has non-zero reads mapped.
+cells_per_gene <- Matrix::rowSums(pbmc.data>0 )
+
+```
+```{r}
+##visualising counts_per_cell 
+hist(log10(counts_per_cell+1),main='counts per cell',col='wheat')
+hist(log10(genes_per_cell+1), main='genes per cell', col='wheat')
+#plot(counts_per_cell, genes_per_cell, log='xy', col='wheat')
+#title('counts vs genes per cell')
+```
+
+```{r}
+hist(log10(counts_per_gene+1), main='counts per gene', col='wheat')
+### hist(?(?+1), main='counts per gene', col='wheat')
+
+```
+```{r}
+#removing mitochondrian contamination
+pbmc[["percent.mt"]] <- PercentageFeatureSet(pbmc, pattern = "^MT-")
+```
+```{r}
+VlnPlot(pbmc, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+#as you can see from the percent.mt plot, the cell features are now overloaded with the mt expressions thus 
+#removing percent.mt > over five percent is an essential step 
+```
+```{r}
+plot1 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "percent.mt")
+plot2 <- FeatureScatter(pbmc, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+plot1 + plot2
+#check UMI ratio to #genes and % of mito 
+#feature has a linear relationship with number of RNA count
+```      
+```{r}
+pbmc <- subset(pbmc, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+```
+
+
+```{r}
+pbmc <- NormalizeData(pbmc, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+```{r}
+pbmc <- NormalizeData(pbmc)
+```
+```{r}
+#identification of highly variable features 
+  #We next calculate a subset of features that exhibit high cell-to-cell variation in the dataset (i.e, they are highly expressed in some cells, and lowly expressed in others). We and others have found that focusing on these genes in downstream analysis helps to highlight biological signal in single-cell datasets.
+
+  #Our procedure in Seurat3 is described in detail here, and improves on previous versions by directly modeling the mean-variance relationship inherent in single-cell data, and is implemented in the FindVariableFeatures function. By default, we return 2,000 features per dataset. These will be used in downstream analysis, like PCA.
+pbmc <- FindVariableFeatures(pbmc, selection.method = "vst", nfeatures = 2000)
+```
+```{r}
+top10 <- head(VariableFeatures(pbmc), 10)
+```
+```{r}
+plot1 <- VariableFeaturePlot(pbmc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+#identification of highly variable feature 
+```
+
+```{r}
+#scaling the data 
+# linear trasnformation prior to dimensionality reduction 
+pbmc <- ScaleData(object = pbmc, vars.to.regress = "percent.mt")
+
+all.genes <- rownames(pbmc)
+pbmc <- ScaleData(pbmc, features = all.genes)
+#need to eliminate s100A9 and LYZ S100A8 -> cell cycle genes
+
+plot1 <- VariableFeaturePlot(pbmc)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+```
+```{r}
+pbmc <- RunPCA(pbmc, features = VariableFeatures(object = pbmc))
+```
+
+
+```{r}
+# Examine and visualize PCA results a few different ways
+print(pbmc[["pca"]], dims = 1:5, nfeatures = 5)
+```
+```{r}
+VizDimLoadings(pbmc, dims = 1, reduction = "pca")
+VizDimLoadings(pbmc, dims = 2, reduction = "pca")
+VizDimLoadings(pbmc, dims = 3, reduction = "pca")
+VizDimLoadings(pbmc, dims = 4, reduction = "pca")
+VizDimLoadings(pbmc, dims = 5, reduction = "pca")
+```
+```{r}
+DimPlot(pbmc, reduction = "pca")
+FeaturePlot(object = pbmc, features = "MS4A1")
+FeatureScatter(object = pbmc, feature1 = "MS4A1", feature2 = "PC_1")
+
+```
+```{r}
+#visualizing heatmap shows that pc 1 and 2 is only visualizable 
+DimHeatmap(pbmc, dims = 1, cells = 100, balanced = TRUE)
+DimHeatmap(pbmc, dims = 1:15, cells = 400, balanced = TRUE)
+```
+
+
+```{r}
+pbmc <- JackStraw(pbmc, num.replicate = 100)
+pbmc <- ScoreJackStraw(pbmc, dims = 1:20)
+
+
+```
+```{r}
+JackStrawPlot(pbmc, dims = 1:10)
+```
+```{r}
+#to see the significance of the PCs 
+ElbowPlot(object = pbmc)
+```
+
+
+```{r}
+pbmc <- FindNeighbors(pbmc, dims = 1:10)
+pbmc <- FindClusters(pbmc, resolution = 0.5)
+```
+
+
+```{r}
+pbmc <- RunTSNE(object = pbmc, dims.use = 1:20, do.fast = TRUE)
+pbmc <- RunUMAP(pbmc, dims = 1:20)
+```
+```{r}
+DimPlot(pbmc, reduction = "tsne", label = TRUE)
+```
+```{r}
+# find all markers of cluster 1
+cluster1.markers <- FindMarkers(pbmc, ident.1 = 1, min.pct = 0.25)
+head(cluster1.markers, n = 5)
+```
+
+```{r}
+DimPlot(pbmc, reduction = "umap", label = TRUE)
+```
+
+
+```{r}
+pbmc.markers <- FindAllMarkers(pbmc, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+pbmc.markers %>% group_by(cluster) %>% top_n(n = 3, wt = avg_logFC)
+```
+
+```{r}
+new.cluster.ids <- c("Naive CD4 T", "Memory CD4 T", "CD14+ Mono", "B", "CD8 T", "FCGR3A+ Mono", 
+    "NK", "DC", "Platelet")
+names(new.cluster.ids) <- levels(pbmc)
+pbmc <- RenameIdents(pbmc, new.cluster.ids)
+
+```
+
+
+
+=
+```{r}
+# find all markers distinguishing cluster 5 from clusters 0 and 3
+cluster5.markers <- FindMarkers(pbmc, ident.1 = 5, ident.2 = c(0, 3), min.pct = 0.25)
+head(cluster5.markers, n = 5)
+```
+
+
